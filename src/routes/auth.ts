@@ -158,6 +158,8 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
           role: user.role,
           image: user.image,
           phone: user.phone,
+          verificationStatus: user.verificationStatus,
+          businessName: user.businessName,
         },
         accessToken,
         refreshToken,

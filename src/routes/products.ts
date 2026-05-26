@@ -1,47 +1,10 @@
 import { Elysia, t } from "elysia";
 import { db } from "../db";
 import { products, users } from "../db/schema";
-import { eq, ilike, and, gte, lte, sql, desc, asc } from "drizzle-orm";
-import { jwtPlugin } from "../middleware/auth";
-
-async function requireSupplier(
-  headers: Record<string, string | undefined>,
-  jwt: { verify: (token: string) => Promise<any> },
-  set: { status: number }
-) {
-  const authorization = headers.authorization;
-  if (!authorization?.startsWith("Bearer ")) {
-    set.status = 401;
-    return { error: { error: "Unauthorized" } };
-  }
-
-  const payload = await jwt.verify(authorization.split(" ")[1]);
-  if (!payload?.sub) {
-    set.status = 401;
-    return { error: { error: "Invalid token" } };
-  }
-
-  const [user] = await db
-    .select({ id: users.id, role: users.role })
-    .from(users)
-    .where(eq(users.id, payload.sub as string))
-    .limit(1);
-
-  if (!user) {
-    set.status = 401;
-    return { error: { error: "User not found" } };
-  }
-
-  if (user.role !== "supplier") {
-    set.status = 403;
-    return { error: { error: "Only suppliers can perform this action" } };
-  }
-
-  return { user };
-}
+import { eq, ilike, and, gte, lte, ne, sql, desc, asc } from "drizzle-orm";
+import { authGuard, requireApprovedSupplier } from "../middleware/auth";
 
 export const productRoutes = new Elysia({ prefix: "/products" })
-  .use(jwtPlugin)
 
   // ─── List Products (Public) ──────────────────────────
   .get(
@@ -62,8 +25,7 @@ export const productRoutes = new Elysia({ prefix: "/products" })
       const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
       const offset = (pageNum - 1) * limitNum;
 
-      const conditions = [];
-      conditions.push(eq(products.status, "active"));
+      const conditions: any[] = [eq(products.status, "active")];
 
       if (search) {
         conditions.push(
@@ -132,10 +94,7 @@ export const productRoutes = new Elysia({ prefix: "/products" })
         limit: t.Optional(t.String()),
         sort: t.Optional(t.String()),
       }),
-      detail: {
-        summary: "List products with search, filters, and pagination",
-        tags: ["Products"],
-      },
+      detail: { summary: "List products with search, filters, and pagination", tags: ["Products"] },
     }
   )
 
@@ -166,7 +125,7 @@ export const productRoutes = new Elysia({ prefix: "/products" })
         })
         .from(products)
         .leftJoin(users, eq(products.supplierId, users.id))
-        .where(eq(products.id, params.id))
+        .where(and(eq(products.id, params.id), ne(products.status, "deleted")))
         .limit(1);
 
       if (!product) {
@@ -183,23 +142,76 @@ export const productRoutes = new Elysia({ prefix: "/products" })
     },
     {
       params: t.Object({ id: t.String() }),
-      detail: {
-        summary: "Get a single product by ID",
-        tags: ["Products"],
-      },
+      detail: { summary: "Get a single product by ID", tags: ["Products"] },
     }
   )
 
-  // ─── Create Product (Protected - Supplier Only) ──────
+  // ─── Supplier's Own Products ──────────────────────────
+  .use(requireApprovedSupplier)
+
+  .get(
+    "/mine",
+    async ({ user, query }) => {
+      const { status, page = "1", limit = "20" } = query;
+      const pageNum = Math.max(1, parseInt(page));
+      const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
+      const offset = (pageNum - 1) * limitNum;
+
+      const conditions: any[] = [
+        eq(products.supplierId, user.id),
+        ne(products.status, "deleted"),
+      ];
+      if (status) conditions.push(eq(products.status, status as any));
+
+      const items = await db
+        .select({
+          id: products.id,
+          name: products.name,
+          partNumber: products.partNumber,
+          category: products.category,
+          price: products.price,
+          stockQuantity: products.stockQuantity,
+          images: products.images,
+          status: products.status,
+          viewCount: products.viewCount,
+          createdAt: products.createdAt,
+          updatedAt: products.updatedAt,
+        })
+        .from(products)
+        .where(and(...conditions))
+        .orderBy(desc(products.createdAt))
+        .limit(limitNum)
+        .offset(offset);
+
+      const [{ count }] = await db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(products)
+        .where(and(...conditions));
+
+      return {
+        products: items,
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total: count,
+          totalPages: Math.ceil(count / limitNum),
+        },
+      };
+    },
+    {
+      query: t.Object({
+        status: t.Optional(t.String()),
+        page: t.Optional(t.String()),
+        limit: t.Optional(t.String()),
+      }),
+      detail: { summary: "List authenticated supplier's own products", tags: ["Products"] },
+    }
+  )
+
+  // ─── Create Product (Approved Supplier) ──────────────
   .post(
     "/",
-    async ({ body, headers, jwt, set }) => {
-      const result = await requireSupplier(headers, jwt as any, set as any);
-      if ("error" in result) {
-        return result.error;
-      }
-      const user = result.user;
-
+    async ({ body, user, set }) => {
       const [product] = await db
         .insert(products)
         .values({
@@ -241,27 +253,18 @@ export const productRoutes = new Elysia({ prefix: "/products" })
         ),
         warrantyInfo: t.Optional(t.String()),
       }),
-      detail: {
-        summary: "Create a new product (supplier only)",
-        tags: ["Products"],
-      },
+      detail: { summary: "Create a new product (approved supplier only)", tags: ["Products"] },
     }
   )
 
-  // ─── Update Product (Protected) ──────────────────────
+  // ─── Update Product ───────────────────────────────────
   .patch(
     "/:id",
-    async ({ params, body, headers, jwt, set }) => {
-      const result = await requireSupplier(headers, jwt as any, set as any);
-      if ("error" in result) {
-        return result.error;
-      }
-      const user = result.user;
-
+    async ({ params, body, user, set }) => {
       const [existing] = await db
         .select({ supplierId: products.supplierId })
         .from(products)
-        .where(eq(products.id, params.id))
+        .where(and(eq(products.id, params.id), ne(products.status, "deleted")))
         .limit(1);
 
       if (!existing) {
@@ -308,27 +311,18 @@ export const productRoutes = new Elysia({ prefix: "/products" })
           ]),
         })
       ),
-      detail: {
-        summary: "Update a product (owner supplier only)",
-        tags: ["Products"],
-      },
+      detail: { summary: "Update a product (owner only)", tags: ["Products"] },
     }
   )
 
-  // ─── Delete Product (Soft Delete, Protected) ─────────
+  // ─── Delete Product (Soft) ────────────────────────────
   .delete(
     "/:id",
-    async ({ params, headers, jwt, set }) => {
-      const result = await requireSupplier(headers, jwt as any, set as any);
-      if ("error" in result) {
-        return result.error;
-      }
-      const user = result.user;
-
+    async ({ params, user, set }) => {
       const [existing] = await db
         .select({ supplierId: products.supplierId })
         .from(products)
-        .where(eq(products.id, params.id))
+        .where(and(eq(products.id, params.id), ne(products.status, "deleted")))
         .limit(1);
 
       if (!existing) {
@@ -349,9 +343,6 @@ export const productRoutes = new Elysia({ prefix: "/products" })
     },
     {
       params: t.Object({ id: t.String() }),
-      detail: {
-        summary: "Soft delete a product (owner supplier only)",
-        tags: ["Products"],
-      },
+      detail: { summary: "Soft delete a product (owner only)", tags: ["Products"] },
     }
   );

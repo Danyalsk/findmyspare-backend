@@ -2,10 +2,10 @@ import { Elysia } from "elysia";
 import { db } from "../db";
 import { orders, escrowTransactions, bids, inquiries } from "../db/schema";
 import { eq, and, inArray, gte, sql } from "drizzle-orm";
-import { requireRole } from "../middleware/auth";
+import { requireApprovedSupplier } from "../middleware/auth";
 
 export const supplierRoutes = new Elysia({ prefix: "/supplier" })
-  .use(requireRole("supplier"))
+  .use(requireApprovedSupplier)
 
   // ─── Supplier Dashboard KPIs ─────────────────────────
   .get("/dashboard", async ({ user }) => {

@@ -1,22 +1,24 @@
-import { Elysia, t } from "elysia";
+import { Elysia } from "elysia";
 import { jwt } from "@elysiajs/jwt";
 import { db } from "../db";
 import { users } from "../db/schema";
 import { eq } from "drizzle-orm";
 
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET && process.env.NODE_ENV === "production") {
+  throw new Error("JWT_SECRET must be set in production");
+}
+
 // ─── JWT Auth Plugin ─────────────────────────────────
-// Provides jwt.sign() and jwt.verify() to all routes that use this plugin
 export const jwtPlugin = new Elysia({ name: "jwt" }).use(
   jwt({
     name: "jwt",
-    secret: process.env.JWT_SECRET || "fallback-secret-change-me",
+    secret: JWT_SECRET || "dev-only-secret-change-me",
     exp: "15m",
   })
 );
 
 // ─── Auth Guard Plugin ───────────────────────────────
-// Derives the authenticated user from the Authorization header.
-// Routes using this plugin will have `user` available in the context.
 export const authGuard = new Elysia({ name: "authGuard" })
   .use(jwtPlugin)
   .derive({ as: "global" }, async ({ jwt, headers, set }) => {
@@ -35,7 +37,6 @@ export const authGuard = new Elysia({ name: "authGuard" })
       throw new Error("Unauthorized: Invalid or expired token");
     }
 
-    // Fetch user from DB to ensure they still exist and get latest data
     const [user] = await db
       .select({
         id: users.id,
@@ -45,6 +46,7 @@ export const authGuard = new Elysia({ name: "authGuard" })
         phone: users.phone,
         image: users.image,
         businessName: users.businessName,
+        verificationStatus: users.verificationStatus,
         isActive: users.isActive,
       })
       .from(users)
@@ -60,15 +62,34 @@ export const authGuard = new Elysia({ name: "authGuard" })
   });
 
 // ─── Role Guard Helper ───────────────────────────────
-// Use after authGuard to restrict access to a specific role
-export const requireRole = (role: "buyer" | "supplier") =>
+export const requireRole = (role: "buyer" | "supplier" | "admin") =>
   new Elysia({ name: `requireRole:${role}` })
     .use(authGuard)
-    .onBeforeHandle({ as: "global" }, ({ user, set }) => {
+    // `as: "scoped"` — guard applies only to routes registered after
+    // `.use(requireRole(...))` within the same plugin/subtree. Using "global"
+    // here leaks the role check into every other route in the parent app.
+    .onBeforeHandle({ as: "scoped" }, ({ user, set }) => {
       if (user.role !== role) {
         set.status = 403;
-        throw new Error(
-          `Forbidden: This action requires the '${role}' role`
-        );
+        throw new Error(`Forbidden: This action requires the '${role}' role`);
       }
     });
+
+export const requireAdmin = requireRole("admin");
+
+// Approved supplier guard — used by supplier-only protected actions
+// (e.g., creating products, submitting bids). Pending/rejected suppliers
+// can still call onboarding endpoints but not these.
+export const requireApprovedSupplier = new Elysia({ name: "requireApprovedSupplier" })
+  .use(authGuard)
+  // See comment above: scoped, not global, to avoid leaking into siblings.
+  .onBeforeHandle({ as: "scoped" }, ({ user, set }) => {
+    if (user.role !== "supplier") {
+      set.status = 403;
+      throw new Error("Forbidden: Supplier role required");
+    }
+    if (user.verificationStatus !== "approved") {
+      set.status = 403;
+      throw new Error("Forbidden: Supplier verification not approved");
+    }
+  });

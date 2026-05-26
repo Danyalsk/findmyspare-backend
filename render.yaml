@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: findmyspare-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    region: singapore  # closest to India; or use ohio/oregon
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Secrets — set values in Render dashboard (Settings → Environment)
+      # Never put real values in this file
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: NHOST_SUBDOMAIN
+        sync: false
+      - key: NHOST_REGION
+        sync: false
+      - key: NHOST_ADMIN_SECRET
+        sync: false
+      - key: NHOST_BUCKET_ID
+        value: default

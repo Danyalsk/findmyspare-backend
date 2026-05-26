@@ -1,4 +1,8 @@
 node_modules/
 dist/
-.env
 *.log
+
+# env files — all ignored except the example template
+.env
+.env.*
+!.env.example

@@ -3,11 +3,12 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "bun run --watch src/index.ts",
-    "start": "bun run src/index.ts",
+    "dev": "bun --env-file=.env run --watch src/index.ts",
+    "start": "bun --env-file=.env run src/index.ts",
     "db:generate": "bun --env-file=.env x drizzle-kit generate",
     "db:push": "bun --env-file=.env x drizzle-kit push",
-    "db:studio": "bun --env-file=.env x drizzle-kit studio"
+    "db:studio": "bun --env-file=.env x drizzle-kit studio",
+    "db:seed": "bun --env-file=.env run src/scripts/seed.ts"
   },
   "dependencies": {
     "@elysiajs/cors": "^1.2.0",
