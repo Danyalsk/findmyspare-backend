@@ -29,8 +29,12 @@ const PORT = parseInt(process.env.PORT || "8000");
 const NODE_ENV = process.env.NODE_ENV || "development";
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
 
+// Demo Vercel preview URL stays allowed even after FRONTEND_URL flips to
+// the custom domain — useful while DNS for demo.findmyspare.com is propagating.
+const PROD_EXTRA_ORIGINS = ["https://findmyspare-demo.vercel.app"];
+
 const corsOrigins = NODE_ENV === "production"
-  ? [FRONTEND_URL]
+  ? [FRONTEND_URL, ...PROD_EXTRA_ORIGINS]
   : [FRONTEND_URL, "http://localhost:3000", "http://localhost:3001", "http://localhost:5001"];
 
 // ─── Elysia App ──────────────────────────────────────
