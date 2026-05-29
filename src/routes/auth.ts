@@ -18,7 +18,6 @@ import {
   sendPasswordResetEmail,
   sendOtpEmail,
 } from "../lib/email";
-import { verifyFirebasePhoneToken } from "../lib/firebase-admin";
 import { sendWhatsAppOtp } from "../lib/whatsapp-otp";
 
 const OTP_TTL_MS = 10 * 60 * 1000; // 10 minutes
@@ -525,64 +524,9 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
     }
   )
 
-  // ─── Firebase Phone OTP verification ─────────────────
-  // Client runs Firebase Phone Auth, then posts the resulting ID token here.
-  // We verify the token, attach the phone to the user, and mark phoneVerified.
-  .post(
-    "/verify-firebase-phone",
-    async ({ body, set, request }) => {
-      const rl = await checkRateLimit(set, request, "auth:phone-verify", 10, 5 * 60_000);
-      if (rl) return rl;
-
-      let verified;
-      try {
-        verified = await verifyFirebasePhoneToken(body.idToken);
-      } catch (e) {
-        return fail(set, 401, e instanceof Error ? e.message : "Invalid OTP token");
-      }
-
-      // Resolve user: prefer the email in the request (signed-in client),
-      // else look up by phone.
-      const where = body.email
-        ? eq(users.email, body.email.toLowerCase())
-        : eq(users.phone, verified.phoneNumber);
-
-      const [u] = await db.select({ id: users.id, phone: users.phone }).from(users).where(where).limit(1);
-      if (!u) return fail(set, 404, "User not found");
-
-      if (u.phone && u.phone !== verified.phoneNumber) {
-        // Phone collision: phone is already taken by another account.
-        const [collide] = await db
-          .select({ id: users.id })
-          .from(users)
-          .where(eq(users.phone, verified.phoneNumber))
-          .limit(1);
-        if (collide && collide.id !== u.id) {
-          return fail(set, 409, "This phone is already linked to another account");
-        }
-      }
-
-      await db
-        .update(users)
-        .set({ phone: verified.phoneNumber, phoneVerified: true, updatedAt: new Date() })
-        .where(eq(users.id, u.id));
-      return { ok: true, phone: verified.phoneNumber };
-    },
-    {
-      body: t.Object({
-        idToken: t.String({ minLength: 16 }),
-        email: t.Optional(t.String({ format: "email" })),
-      }),
-      detail: {
-        summary: "Verify a Firebase Phone Auth ID token and link the phone to the user",
-        tags: ["Auth"],
-      },
-    }
-  )
-
   // ─── Passwordless OTP — request a code ───────────────
   // identifier is an email (→ 6-digit code via Resend) or an Indian phone
-  // (→ client handles Firebase SMS; server just validates + echoes type).
+  // (→ 6-digit code via WhatsApp). Phone path is dormant in v1 (email only).
   .post(
     "/otp/request",
     async ({ body, set, request }) => {
@@ -625,7 +569,7 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
     },
     {
       body: t.Object({ identifier: t.String({ minLength: 3 }) }),
-      detail: { summary: "Request a login OTP (email code or phone via Firebase)", tags: ["Auth"] },
+      detail: { summary: "Request a login OTP (email code via Resend)", tags: ["Auth"] },
     }
   )
 

@@ -103,7 +103,7 @@ export const emailVerificationTokens = pgTable("email_verification_tokens", {
 });
 
 // ─── Login OTP codes (passwordless email/phone) ──────
-// Phone OTP is handled by Firebase client-side; this table backs EMAIL OTP.
+// Backs EMAIL OTP login (phone OTP via WhatsApp uses the same table).
 export const loginOtps = pgTable(
   "login_otps",
   {

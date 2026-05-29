@@ -18,7 +18,6 @@
     "drizzle-orm": "^0.45.1",
     "elysia": "^1.2.25",
     "firebase": "^12.13.0",
-    "firebase-admin": "^13.10.0",
     "postgres": "^3.4.8",
     "resend": "^6.12.4",
     "socket.io": "^4.8.3"
