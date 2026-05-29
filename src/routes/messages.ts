@@ -4,6 +4,7 @@ import { messages, users } from "../db/schema";
 import { eq, and, or, desc, sql } from "drizzle-orm";
 import { authGuard } from "../middleware/auth";
 import { broadcastNewMessage, broadcastMessageRead } from "../lib/io";
+import { rateLimit } from "../lib/rate-limit";
 
 export const messageRoutes = new Elysia({ prefix: "/messages" })
   .use(authGuard)
@@ -162,6 +163,14 @@ export const messageRoutes = new Elysia({ prefix: "/messages" })
         return { error: "Cannot message yourself" };
       }
 
+      // Per-sender rate limit: 30 messages / 60s. Prevents spam + socket flood.
+      const rl = rateLimit(`msg:${user.id}`, 30, 60_000);
+      if (!rl.ok) {
+        set.status = 429;
+        set.headers["retry-after"] = String(Math.ceil(rl.resetMs / 1000));
+        return { error: "Sending too fast. Slow down a moment." };
+      }
+
       const [recipient] = await db
         .select({ id: users.id, role: users.role, isActive: users.isActive })
         .from(users)
@@ -173,21 +182,32 @@ export const messageRoutes = new Elysia({ prefix: "/messages" })
         return { error: "Recipient not found" };
       }
 
-      if (recipient.role === "admin") {
+      if (recipient.role === "admin" || recipient.role === "super_admin") {
         set.status = 403;
         return { error: "Cannot message admin" };
       }
 
-      const [msg] = await db
-        .insert(messages)
-        .values({
-          senderId: user.id,
-          receiverId: userId,
-          content: body.content,
-        })
-        .returning();
+      // Insert first — broadcast only on confirmed write. If the DB rejects
+      // (constraint, connection, etc.), the catch returns 500 and the socket
+      // event is never emitted, keeping server and client in sync.
+      let msg;
+      try {
+        const inserted = await db
+          .insert(messages)
+          .values({
+            senderId: user.id,
+            receiverId: userId,
+            content: body.content,
+          })
+          .returning();
+        msg = inserted[0];
+        if (!msg) throw new Error("Insert returned no row");
+      } catch (e) {
+        console.error("[messages/send] insert failed:", e);
+        set.status = 500;
+        return { error: "Could not send message" };
+      }
 
-      // Real-time delivery
       broadcastNewMessage(userId, {
         ...msg,
         senderName: user.name,

@@ -5,19 +5,22 @@ import { db } from "../db";
 import { users } from "../db/schema";
 import { eq } from "drizzle-orm";
 
-const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
 const JWT_SECRET = new TextEncoder().encode(
   process.env.JWT_SECRET || "dev-only-secret-change-me"
 );
 
 let _io: IOServer | null = null;
 
-// Call once from index.ts, passing the shared http.Server.
-// Socket.io intercepts WebSocket upgrade requests before they reach Elysia.
-export function initSocketServer(httpServer: HttpServer): IOServer {
+// Call once from index.ts, passing the shared http.Server and the same
+// CORS origin list the REST API uses. Without this, socket connections
+// from the prod Vercel domain are rejected.
+export function initSocketServer(
+  httpServer: HttpServer,
+  corsOrigins: string[]
+): IOServer {
   _io = new IOServer(httpServer, {
     cors: {
-      origin: [FRONTEND_URL, "http://localhost:3000", "http://localhost:3001"],
+      origin: corsOrigins,
       credentials: true,
     },
     // Allow both ws:// and polling transports

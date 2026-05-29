@@ -62,7 +62,7 @@ export const authGuard = new Elysia({ name: "authGuard" })
   });
 
 // ─── Role Guard Helper ───────────────────────────────
-export const requireRole = (role: "buyer" | "supplier" | "admin") =>
+export const requireRole = (role: "buyer" | "supplier" | "admin" | "super_admin") =>
   new Elysia({ name: `requireRole:${role}` })
     .use(authGuard)
     // `as: "scoped"` — guard applies only to routes registered after
@@ -75,7 +75,25 @@ export const requireRole = (role: "buyer" | "supplier" | "admin") =>
       }
     });
 
-export const requireAdmin = requireRole("admin");
+// Admin pages and routes accept both regular admin and super_admin tiers.
+// Destructive / config endpoints use `requireSuperAdmin` instead.
+export const requireAdmin = new Elysia({ name: "requireAdmin" })
+  .use(authGuard)
+  .onBeforeHandle({ as: "scoped" }, ({ user, set }) => {
+    if (user.role !== "admin" && user.role !== "super_admin") {
+      set.status = 403;
+      throw new Error("Forbidden: admin role required");
+    }
+  });
+
+export const requireSuperAdmin = new Elysia({ name: "requireSuperAdmin" })
+  .use(authGuard)
+  .onBeforeHandle({ as: "scoped" }, ({ user, set }) => {
+    if (user.role !== "super_admin") {
+      set.status = 403;
+      throw new Error("Forbidden: super_admin role required");
+    }
+  });
 
 // Approved supplier guard — used by supplier-only protected actions
 // (e.g., creating products, submitting bids). Pending/rejected suppliers

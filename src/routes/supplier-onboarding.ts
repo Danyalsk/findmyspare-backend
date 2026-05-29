@@ -3,6 +3,19 @@ import { db } from "../db";
 import { users } from "../db/schema";
 import { eq } from "drizzle-orm";
 import { requireRole } from "../middleware/auth";
+import { isValidGstin, isValidPan } from "../lib/gstin";
+import { verifyGstin, isGstApiConfigured } from "../lib/sandbox-gst";
+
+// Fire-and-forget: verify GSTIN via the GST API and store the result so the
+// admin review screen shows live status + legal-name match.
+function runGstVerification(userId: string, gstin: string, businessName: string) {
+  if (!isGstApiConfigured()) return;
+  verifyGstin(gstin, businessName)
+    .then((result) =>
+      db.update(users).set({ gstVerification: result }).where(eq(users.id, userId))
+    )
+    .catch((e) => console.error("[onboarding] GST verify failed:", e));
+}
 
 const onboardingBody = t.Object({
   businessName: t.String({ minLength: 2 }),
@@ -32,10 +45,21 @@ const supplierFields = {
   gstNumber: users.gstNumber,
   panNumber: users.panNumber,
   gstCertificateUrl: users.gstCertificateUrl,
+  gstVerification: users.gstVerification,
   businessAddress: users.businessAddress,
   rejectionReason: users.rejectionReason,
   createdAt: users.createdAt,
 };
+
+function validateGstPan(gstNumber: string, panNumber: string): string | null {
+  if (!isValidGstin(gstNumber)) {
+    return "GSTIN failed the checksum — re-check the 15-character number.";
+  }
+  if (!isValidPan(panNumber)) {
+    return "PAN is not in a valid format (e.g. ABCDE1234F).";
+  }
+  return null;
+}
 
 export const supplierOnboardingRoutes = new Elysia({ prefix: "/supplier/onboarding" })
   // All onboarding routes require supplier role but NOT approved status
@@ -74,14 +98,23 @@ export const supplierOnboardingRoutes = new Elysia({ prefix: "/supplier/onboardi
         return { error: `Onboarding already ${status}` };
       }
 
+      const gst = body.gstNumber.toUpperCase();
+      const pan = body.panNumber.toUpperCase();
+      const vErr = validateGstPan(gst, pan);
+      if (vErr) {
+        set.status = 400;
+        return { error: vErr };
+      }
+
       const [updated] = await db
         .update(users)
         .set({
           businessName: body.businessName,
-          gstNumber: body.gstNumber,
-          panNumber: body.panNumber,
+          gstNumber: gst,
+          panNumber: pan,
           phone: body.phone ?? undefined,
           gstCertificateUrl: body.gstCertificateUrl ?? null,
+          gstVerification: null, // cleared; async verify repopulates
           businessAddress: body.businessAddress,
           verificationStatus: "pending",
           rejectionReason: null,
@@ -90,6 +123,7 @@ export const supplierOnboardingRoutes = new Elysia({ prefix: "/supplier/onboardi
         .where(eq(users.id, user.id))
         .returning(supplierFields);
 
+      runGstVerification(user.id, gst, body.businessName);
       return { user: updated };
     },
     {
@@ -115,14 +149,23 @@ export const supplierOnboardingRoutes = new Elysia({ prefix: "/supplier/onboardi
         return { error: `Cannot resubmit when status is '${status}'` };
       }
 
+      const gst = body.gstNumber.toUpperCase();
+      const pan = body.panNumber.toUpperCase();
+      const vErr = validateGstPan(gst, pan);
+      if (vErr) {
+        set.status = 400;
+        return { error: vErr };
+      }
+
       const [updated] = await db
         .update(users)
         .set({
           businessName: body.businessName,
-          gstNumber: body.gstNumber,
-          panNumber: body.panNumber,
+          gstNumber: gst,
+          panNumber: pan,
           phone: body.phone ?? undefined,
           gstCertificateUrl: body.gstCertificateUrl ?? null,
+          gstVerification: null,
           businessAddress: body.businessAddress,
           verificationStatus: "pending",
           rejectionReason: null,
@@ -131,6 +174,7 @@ export const supplierOnboardingRoutes = new Elysia({ prefix: "/supplier/onboardi
         .where(eq(users.id, user.id))
         .returning(supplierFields);
 
+      runGstVerification(user.id, gst, body.businessName);
       return { user: updated };
     },
     {

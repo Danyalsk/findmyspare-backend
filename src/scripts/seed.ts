@@ -7,6 +7,12 @@ const DEMO_PASSWORD = "demo1234";
 const ADMIN_PASSWORD = "Admin1234!";
 
 async function seed() {
+  if (process.env.NODE_ENV === "production" && process.env.ALLOW_PROD_SEED !== "true") {
+    console.error(
+      "Refusing to seed in production. Set ALLOW_PROD_SEED=true to override."
+    );
+    process.exit(1);
+  }
   console.log("🌱 Seeding FindMySpare...\n");
 
   // ─── Users ─────────────────────────────────────────────

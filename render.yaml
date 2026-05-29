@@ -25,3 +25,27 @@ services:
         sync: false
       - key: NHOST_BUCKET_ID
         value: default
+      # Phase 8: new providers added in Phase 2 (auth) — set values in dashboard.
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_FROM
+        sync: false
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: FIREBASE_CLIENT_EMAIL
+        sync: false
+      - key: FIREBASE_PRIVATE_KEY
+        sync: false
+      # Optional comma-separated list of extra allowed prod origins (Vercel
+      # preview deploys, www subdomain). Hardened in src/index.ts.
+      - key: PROD_EXTRA_ORIGINS
+        sync: false
+      # GSTIN verification (RapidAPI)
+      - key: RAPIDAPI_KEY
+        sync: false
+      - key: RAPIDAPI_GST_HOST
+        sync: false
+      - key: RAPIDAPI_GST_URL
+        sync: false
+      - key: RAPIDAPI_GST_METHOD
+        value: GET

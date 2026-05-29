@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, text, timestamp, boolean, pgEnum } from "drizzle-orm/pg-core";
+import { pgTable, uuid, varchar, text, timestamp, boolean, pgEnum, index } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { users } from "./users";
 import { products } from "./products";
@@ -32,7 +32,10 @@ export const inquiries = pgTable("inquiries", {
 
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-});
+}, (t) => ({
+  byBuyer: index("inquiries_buyer_idx").on(t.buyerId),
+  byActive: index("inquiries_active_idx").on(t.isActive),
+}));
 
 // ─── Relations ───────────────────────────────────────
 export const inquiriesRelations = relations(inquiries, ({ one }) => ({

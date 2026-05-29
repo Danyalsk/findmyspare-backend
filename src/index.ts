@@ -17,6 +17,7 @@ import { notificationRoutes } from "./routes/notifications";
 import { supplierRoutes } from "./routes/supplier";
 import { supplierOnboardingRoutes } from "./routes/supplier-onboarding";
 import { adminRoutes } from "./routes/admin";
+import { adminSuperRoutes } from "./routes/admin-super";
 import { bannerRoutes } from "./routes/banners";
 import { uploadRoutes } from "./routes/upload";
 import { messageRoutes } from "./routes/messages";
@@ -29,11 +30,24 @@ const PORT = parseInt(process.env.PORT || "8000");
 const NODE_ENV = process.env.NODE_ENV || "development";
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
 
-// Demo Vercel preview URL stays allowed even after FRONTEND_URL flips to
-// the custom domain — useful while DNS for demo.findmyspare.com is propagating.
-const PROD_EXTRA_ORIGINS = ["https://findmyspare-demo.vercel.app"];
+// Extra prod origins (Vercel previews, www subdomain, etc.) from env. Comma-separated.
+const PROD_EXTRA_ORIGINS = (process.env.PROD_EXTRA_ORIGINS || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
 
-const corsOrigins = NODE_ENV === "production"
+if (NODE_ENV === "production") {
+  if (!/^https:\/\//.test(FRONTEND_URL)) {
+    throw new Error(`FRONTEND_URL must use https in production (got: ${FRONTEND_URL})`);
+  }
+  for (const o of PROD_EXTRA_ORIGINS) {
+    if (!/^https:\/\//.test(o)) {
+      throw new Error(`PROD_EXTRA_ORIGINS entries must use https (got: ${o})`);
+    }
+  }
+}
+
+export const corsOrigins = NODE_ENV === "production"
   ? [FRONTEND_URL, ...PROD_EXTRA_ORIGINS]
   : [FRONTEND_URL, "http://localhost:3000", "http://localhost:3001", "http://localhost:5001"];
 
@@ -106,7 +120,7 @@ const app = new Elysia()
     timestamp: new Date().toISOString(),
   }))
 
-  .get("/health", async () => {
+  .get("/health", async ({ set }) => {
     let dbStatus: "connected" | "error" = "connected";
     let dbError: string | undefined;
     try {
@@ -115,6 +129,9 @@ const app = new Elysia()
       dbStatus = "error";
       dbError = err instanceof Error ? err.message : String(err);
     }
+    // 503 lets Render's health check trigger an autoheal restart when the
+    // DB pool can't recover.
+    if (dbStatus === "error") set.status = 503;
     return {
       status: dbStatus === "connected" ? "healthy" : "degraded",
       uptime: process.uptime(),
@@ -136,6 +153,7 @@ const app = new Elysia()
   .use(supplierRoutes)
   .use(supplierOnboardingRoutes)
   .use(adminRoutes)
+  .use(adminSuperRoutes)
   .use(bannerRoutes)
   .use(uploadRoutes)
   .use(messageRoutes);
@@ -184,8 +202,9 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
   res.end();
 });
 
-// Attach socket.io to the shared HTTP server
-initSocketServer(httpServer);
+// Attach socket.io to the shared HTTP server with the same CORS origins
+// as the REST API. Prevents prod WebSocket rejections from the Vercel domain.
+initSocketServer(httpServer, corsOrigins);
 
 httpServer.listen(PORT, () => {
   console.log(`

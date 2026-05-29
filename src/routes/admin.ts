@@ -1,9 +1,14 @@
 import { Elysia, t } from "elysia";
 import { db } from "../db";
-import { users, products, inquiries, banners } from "../db/schema";
+import { users, products, inquiries, banners, rejectionReasons } from "../db/schema";
 import { eq, ilike, and, ne, sql, desc, or, inArray } from "drizzle-orm";
 import { requireAdmin } from "../middleware/auth";
 import { parsePagination, paginate } from "../lib/pagination";
+import { logAdminAction } from "../lib/audit";
+import { sendSupplierStatusEmail } from "../lib/email";
+
+void parsePagination;
+void inArray;
 
 export const adminRoutes = new Elysia({ prefix: "/admin" })
   .use(requireAdmin)
@@ -99,6 +104,7 @@ export const adminRoutes = new Elysia({ prefix: "/admin" })
           gstNumber: users.gstNumber,
           panNumber: users.panNumber,
           gstCertificateUrl: users.gstCertificateUrl,
+          gstVerification: users.gstVerification,
           businessAddress: users.businessAddress,
           rejectionReason: users.rejectionReason,
           isActive: users.isActive,
@@ -123,9 +129,9 @@ export const adminRoutes = new Elysia({ prefix: "/admin" })
 
   .post(
     "/suppliers/:id/approve",
-    async ({ params, set }) => {
+    async ({ params, user, request, set }) => {
       const [existing] = await db
-        .select({ id: users.id, role: users.role })
+        .select({ id: users.id, role: users.role, email: users.email, name: users.name })
         .from(users)
         .where(and(eq(users.id, params.id), eq(users.role, "supplier")))
         .limit(1);
@@ -144,6 +150,14 @@ export const adminRoutes = new Elysia({ prefix: "/admin" })
           verificationStatus: users.verificationStatus,
         });
 
+      if (existing.email)
+        sendSupplierStatusEmail(existing.email, existing.name ?? "there", "approved").catch((e) =>
+          console.error("[admin/approve] email failed:", e)
+        );
+      logAdminAction({ actorId: user.id, request }, "supplier_approve", {
+        type: "user",
+        id: params.id,
+      });
       return { supplier: updated };
     },
     {
@@ -154,9 +168,9 @@ export const adminRoutes = new Elysia({ prefix: "/admin" })
 
   .post(
     "/suppliers/:id/reject",
-    async ({ params, body, set }) => {
+    async ({ params, body, user, request, set }) => {
       const [existing] = await db
-        .select({ id: users.id, role: users.role })
+        .select({ id: users.id, role: users.role, email: users.email, name: users.name })
         .from(users)
         .where(and(eq(users.id, params.id), eq(users.role, "supplier")))
         .limit(1);
@@ -166,21 +180,49 @@ export const adminRoutes = new Elysia({ prefix: "/admin" })
         return { error: "Supplier not found" };
       }
 
+      // Optional templated reason: resolve a slug to a stored template body.
+      let reasonText = body.reason ?? "";
+      if (body.reasonSlug) {
+        const [tmpl] = await db
+          .select({ body: rejectionReasons.body })
+          .from(rejectionReasons)
+          .where(eq(rejectionReasons.slug, body.reasonSlug))
+          .limit(1);
+        if (tmpl) reasonText = `${tmpl.body}${reasonText ? `\n\n${reasonText}` : ""}`;
+      }
+      if (!reasonText || reasonText.length < 5) {
+        set.status = 400;
+        return { error: "Rejection reason or template slug required" };
+      }
+
       const [updated] = await db
         .update(users)
-        .set({ verificationStatus: "rejected", rejectionReason: body.reason, updatedAt: new Date() })
+        .set({ verificationStatus: "rejected", rejectionReason: reasonText, updatedAt: new Date() })
         .where(eq(users.id, params.id))
         .returning({
           id: users.id, email: users.email, name: users.name,
           verificationStatus: users.verificationStatus, rejectionReason: users.rejectionReason,
         });
 
+      if (existing.email)
+        sendSupplierStatusEmail(existing.email, existing.name ?? "there", "rejected", reasonText).catch((e) =>
+          console.error("[admin/reject] email failed:", e)
+        );
+      logAdminAction(
+        { actorId: user.id, request },
+        "supplier_reject",
+        { type: "user", id: params.id },
+        { reasonSlug: body.reasonSlug, reason: body.reason }
+      );
       return { supplier: updated };
     },
     {
       params: t.Object({ id: t.String() }),
-      body: t.Object({ reason: t.String({ minLength: 5 }) }),
-      detail: { summary: "Reject supplier verification with reason", tags: ["Admin"] },
+      body: t.Object({
+        reason: t.Optional(t.String()),
+        reasonSlug: t.Optional(t.String()),
+      }),
+      detail: { summary: "Reject supplier verification with templated reason", tags: ["Admin"] },
     }
   )
 
@@ -271,11 +313,17 @@ export const adminRoutes = new Elysia({ prefix: "/admin" })
 
   .post(
     "/users/:id/block",
-    async ({ params, body, set }) => {
+    async ({ params, body, user, request, set }) => {
       const [existing] = await db
         .select({ id: users.id, role: users.role })
         .from(users)
-        .where(and(eq(users.id, params.id), ne(users.role, "admin")))
+        .where(
+          and(
+            eq(users.id, params.id),
+            ne(users.role, "admin"),
+            ne(users.role, "super_admin")
+          )
+        )
         .limit(1);
 
       if (!existing) {
@@ -292,6 +340,12 @@ export const adminRoutes = new Elysia({ prefix: "/admin" })
           isBlocked: sql<boolean>`NOT ${users.isActive}`,
         });
 
+      logAdminAction(
+        { actorId: user.id, request },
+        body.blocked ? "user_ban" : "user_unban",
+        { type: "user", id: params.id },
+        { reason: "legacy block toggle" }
+      );
       return { user: updated };
     },
     {

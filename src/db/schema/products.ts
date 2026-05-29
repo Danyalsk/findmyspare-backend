@@ -8,6 +8,7 @@ import {
   jsonb,
   timestamp,
   pgEnum,
+  index,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { users } from "./users";
@@ -43,7 +44,10 @@ export const products = pgTable("products", {
   viewCount: integer("view_count").default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-});
+}, (t) => ({
+  bySupplier: index("products_supplier_idx").on(t.supplierId),
+  byStatus: index("products_status_idx").on(t.status),
+}));
 
 // ─── Relations ───────────────────────────────────────
 export const productsRelations = relations(products, ({ one, many }) => ({

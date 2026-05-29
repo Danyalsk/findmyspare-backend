@@ -7,6 +7,7 @@ import {
   numeric,
   timestamp,
   pgEnum,
+  index,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { users } from "./users";
@@ -39,7 +40,10 @@ export const bids = pgTable("bids", {
   orderId: uuid("order_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-});
+}, (t) => ({
+  byInquiry: index("bids_inquiry_idx").on(t.inquiryId),
+  bySupplier: index("bids_supplier_idx").on(t.supplierId),
+}));
 
 // ─── Relations ───────────────────────────────────────
 export const bidsRelations = relations(bids, ({ one }) => ({
