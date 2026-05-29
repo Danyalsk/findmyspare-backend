@@ -24,6 +24,7 @@ import { messageRoutes } from "./routes/messages";
 import { db, closeConnection } from "./db";
 import { sql } from "drizzle-orm";
 import { initSocketServer, closeSocketServer } from "./lib/io";
+import { auth } from "./lib/auth";
 
 // ─── App Configuration ──────────────────────────────
 const PORT = parseInt(process.env.PORT || "8000");
@@ -185,7 +186,31 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
     body: bodyBuffer?.length ? bodyBuffer.buffer.slice(bodyBuffer.byteOffset, bodyBuffer.byteOffset + bodyBuffer.byteLength) as ArrayBuffer : undefined,
   });
 
-  const response = await app.fetch(request);
+  // BetterAuth owns /api/auth/* — handle it before Elysia so its body parsing
+  // never touches the request (the body is a one-shot stream).
+  let response: Response;
+  if ((req.url ?? "").startsWith("/api/auth")) {
+    const origin = headers.get("origin");
+    const allowed = origin && corsOrigins.includes(origin);
+    // Answer the CORS preflight ourselves (Elysia's cors plugin is bypassed here).
+    if (req.method === "OPTIONS") {
+      response = new Response(null, { status: 204 });
+    } else {
+      response = await auth.handler(request);
+      response = new Response(response.body, response);
+    }
+    if (allowed) {
+      response.headers.set("access-control-allow-origin", origin);
+      response.headers.set("access-control-allow-credentials", "true");
+      response.headers.set("access-control-allow-methods", "GET, POST, OPTIONS");
+      response.headers.set("access-control-allow-headers", "Content-Type, Authorization");
+      // The bearer token is returned in `set-auth-token`; expose it to JS.
+      response.headers.set("access-control-expose-headers", "set-auth-token");
+      response.headers.set("vary", "origin");
+    }
+  } else {
+    response = await app.fetch(request);
+  }
 
   const resHeaders: Record<string, string> = {};
   response.headers.forEach((v, k) => { resHeaders[k] = v; });

@@ -3,6 +3,7 @@
 // This is referenced by drizzle.config.ts and db/index.ts
 
 export * from "./users";
+export * from "./auth";
 export * from "./products";
 export * from "./orders";
 export * from "./addresses";

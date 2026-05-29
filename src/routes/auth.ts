@@ -9,8 +9,9 @@ import {
   passwordResetTokens,
   loginOtps,
   magicLoginTokens,
+  orders,
 } from "../db/schema";
-import { eq, and, isNull, gt, desc } from "drizzle-orm";
+import { eq, and, isNull, gt, desc, notInArray } from "drizzle-orm";
 import { jwtPlugin, authGuard } from "../middleware/auth";
 import { rateLimit, rateLimitKey } from "../lib/rate-limit";
 import { normalizeIndianPhone, isValidE164 } from "../lib/phone";
@@ -175,6 +176,9 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
           phone: normalizedPhone,
           passwordHash,
           role,
+          // Legacy/mobile register captures the full profile (name+role+phone),
+          // so it satisfies the profile gate immediately.
+          profileCompleted: true,
         })
         .returning({
           id: users.id,
@@ -688,56 +692,149 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
   .use(authGuard)
 
   // ─── One-time profile completion after first OTP signup ─
+  // STRICT: the user cannot reach any protected route until this succeeds
+  // (enforced server-side by authGuard's PROFILE_INCOMPLETE gate). Required:
+  //   • name (≥2) + role            — always
+  //   • phone                       — for email signups (user has no phone yet)
+  //   • city + pincode              — for buyers
+  // profileCompleted flips to true ONLY when every required field validates.
   .post(
     "/complete-profile",
     async ({ user, body, set }) => {
-      const updates: Partial<typeof users.$inferInsert> = {
-        updatedAt: new Date(),
-        profileCompleted: true,
-      };
-      if (body.name) updates.name = body.name.trim();
-
-      // Role can only be set while the profile is still incomplete (signup).
       const [current] = await db
-        .select({ profileCompleted: users.profileCompleted, role: users.role })
+        .select({
+          profileCompleted: users.profileCompleted,
+          role: users.role,
+          phone: users.phone,
+        })
         .from(users)
         .where(eq(users.id, user.id))
         .limit(1);
-      if (body.role && current && !current.profileCompleted) {
-        updates.role = body.role;
+      if (!current) return fail(set, 404, "User not found");
+
+      const fields: Record<string, string> = {};
+
+      // Role is NOT chosen here. The normal login door always yields a buyer;
+      // suppliers are tagged via POST /auth/become-supplier before completion.
+      const role = current.role;
+
+      // Name — always required.
+      const name = body.name?.trim() ?? "";
+      if (name.length < 2) fields.name = "Enter your full name.";
+
+      const updates: Partial<typeof users.$inferInsert> = {
+        updatedAt: new Date(),
+        name: name.length >= 2 ? name : undefined,
+        role,
+      };
+
+      // Phone — required for email signups (no phone on file yet).
+      let normalizedPhone = current.phone;
+      if (!current.phone) {
+        if (!body.phone?.trim()) {
+          fields.phone = "Enter your mobile number.";
+        } else {
+          normalizedPhone = normalizeIndianPhone(body.phone);
+          if (!normalizedPhone) {
+            fields.phone = "Enter a valid Indian mobile number.";
+          } else {
+            const [taken] = await db
+              .select({ id: users.id })
+              .from(users)
+              .where(eq(users.phone, normalizedPhone))
+              .limit(1);
+            if (taken && taken.id !== user.id) {
+              fields.phone = "This phone number is already in use.";
+            } else {
+              updates.phone = normalizedPhone;
+            }
+          }
+        }
       }
 
-      // Capture the "other" contact if provided + not already taken.
-      if (body.email) {
+      // City + pincode — required for buyers.
+      if (role === "buyer") {
+        const city = body.city?.trim() ?? "";
+        const pincode = body.pincode?.trim() ?? "";
+        if (city.length < 2) fields.city = "Enter your city.";
+        if (!/^\d{6}$/.test(pincode)) fields.pincode = "Enter a valid 6-digit pincode.";
+        if (city.length >= 2) updates.city = city;
+        if (/^\d{6}$/.test(pincode)) updates.pincode = pincode;
+      }
+
+      // Optional: phone-signup users may add an email (not required).
+      if (body.email && !user.email) {
         const email = body.email.toLowerCase();
         const [taken] = await db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
-        if (taken && taken.id !== user.id) return fail(set, 409, "Email already in use");
-        updates.email = email;
+        if (taken && taken.id !== user.id) {
+          fields.email = "This email is already in use.";
+        } else {
+          updates.email = email;
+        }
       }
-      if (body.phone) {
-        const phone = normalizeIndianPhone(body.phone);
-        if (!phone) return fail(set, 400, "Invalid Indian mobile number");
-        const [taken] = await db.select({ id: users.id }).from(users).where(eq(users.phone, phone)).limit(1);
-        if (taken && taken.id !== user.id) return fail(set, 409, "Phone already in use");
-        updates.phone = phone;
-      }
-      if (body.city) updates.city = body.city.trim();
-      if (body.pincode) updates.pincode = body.pincode.trim();
 
+      if (Object.keys(fields).length > 0) {
+        set.status = 422;
+        return { error: "Please complete all required fields.", fields };
+      }
+
+      updates.profileCompleted = true;
       const [updated] = await db.update(users).set(updates).where(eq(users.id, user.id)).returning();
       return { user: publicUser(updated) };
     },
     {
+      // Loose schema on purpose — the handler does friendly field-level
+      // validation and returns 422 with per-field messages.
       body: t.Object({
-        name: t.Optional(t.String({ minLength: 2 })),
-        role: t.Optional(t.Union([t.Literal("buyer"), t.Literal("supplier")])),
-        email: t.Optional(t.String({ format: "email" })),
+        name: t.Optional(t.String()),
+        email: t.Optional(t.String()),
         phone: t.Optional(t.String()),
         city: t.Optional(t.String()),
         pincode: t.Optional(t.String()),
       }),
       detail: { summary: "Complete the one-time profile after OTP signup", tags: ["Auth"] },
     }
+  )
+
+  // ─── Become a supplier (new signup or buyer upgrade) ─
+  // The supplier login door calls this right after first OTP verify; a logged-in
+  // buyer calls it from a "Become a supplier" CTA. It only flips the role —
+  // GST/business details are still collected at /supplier/onboarding.
+  .post(
+    "/become-supplier",
+    async ({ user, set }) => {
+      if (user.role === "supplier") {
+        // Idempotent — already a supplier.
+        const [u] = await db.select().from(users).where(eq(users.id, user.id)).limit(1);
+        return { user: publicUser(u) };
+      }
+      if (user.role === "admin" || user.role === "super_admin") {
+        return fail(set, 403, "Admins cannot become suppliers");
+      }
+
+      // Block converting a buyer who still has live orders — role is per-account.
+      const TERMINAL = ["delivered", "completed", "cancelled"] as const;
+      const [active] = await db
+        .select({ id: orders.id })
+        .from(orders)
+        .where(and(eq(orders.buyerId, user.id), notInArray(orders.status, [...TERMINAL])))
+        .limit(1);
+      if (active) {
+        return fail(
+          set,
+          409,
+          "Finish or cancel your active orders before becoming a supplier."
+        );
+      }
+
+      const [updated] = await db
+        .update(users)
+        .set({ role: "supplier", updatedAt: new Date() })
+        .where(eq(users.id, user.id))
+        .returning();
+      return { user: publicUser(updated) };
+    },
+    { detail: { summary: "Convert the current account to a supplier", tags: ["Auth"] } }
   )
 
   .get(

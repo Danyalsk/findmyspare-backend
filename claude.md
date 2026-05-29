@@ -14,7 +14,7 @@ REST API backend for the FindMySpare auto-parts marketplace. Serves both the Nex
 | Framework     | **Elysia** v1.2 (Bun-native HTTP framework)     |
 | ORM           | **Drizzle ORM** with `postgres` driver           |
 | Database      | **Nhost PostgreSQL** (cloud, SSL required)       |
-| Auth          | **JWT** via `@elysiajs/jwt` (Bearer tokens, 7d) |
+| Auth          | **BetterAuth** (email-OTP + bearer tokens, DB sessions, 30d). Legacy JWT (`@elysiajs/jwt`) kept only for the mobile app |
 | Password hash | **bcryptjs**                                     |
 | Docs          | **Swagger** at `/swagger`                        |
 
@@ -79,9 +79,29 @@ bun run db:studio        # Open Drizzle Studio GUI
 
 ### Authentication Flow
 
-1. `jwtPlugin` — provides `jwt.sign()` / `jwt.verify()` to any route group.
-2. `authGuard` — derives `{ user }` from the `Authorization: Bearer <token>` header. Fetches the full user row from DB on every request (ensures deactivated users are rejected).
-3. `requireRole("buyer" | "supplier")` — role-based access control guard layered on top of `authGuard`.
+Web auth runs on **BetterAuth** (`src/lib/auth.ts`), mounted at `/api/auth/*` in
+`src/index.ts` (handled before Elysia to avoid double body-parsing). It uses the
+`emailOTP` + `bearer` plugins; the BetterAuth `user` model is mapped onto the
+existing `users` table, with sessions/accounts/verifications in `auth_sessions` /
+`auth_accounts` / `auth_verifications`. Bearer tokens map to DB session rows, so
+**sign-out deletes the row and the token dies immediately** (no stale-JWT window).
+
+1. `auth` (BetterAuth instance) — issues + validates bearer session tokens.
+2. `authGuard` (`src/middleware/auth.ts`) — derives `{ user }` via
+   `auth.api.getSession`, falling back to a **legacy JWT** verify for the mobile
+   app (deprecated). It also enforces the **profile gate**: until
+   `user.profileCompleted` is true (set by `POST /auth/complete-profile`), every
+   protected route returns 403 `PROFILE_INCOMPLETE` (admins + a small allow-list
+   of endpoints are exempt).
+3. `requireRole(...)` / `requireApprovedSupplier` / `requireAdmin` — role guards
+   layered on top of `authGuard`.
+
+Legacy `/auth/*` routes (register/login/refresh/otp/magic) remain mounted for the
+Expo mobile app only — remove once mobile migrates to `/api/auth/*`.
+
+**Deploy note:** new environments need the BetterAuth tables — run
+`bun run src/scripts/apply-auth-tables.ts` (idempotent) against the target DB, and
+set `BETTER_AUTH_SECRET` (+ `BACKEND_URL` in prod).
 
 ### Roles
 
