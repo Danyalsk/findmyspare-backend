@@ -8,13 +8,11 @@ if (!connectionString) {
   throw new Error("DATABASE_URL environment variable is not set");
 }
 
-// Local Postgres has no SSL; cloud (Nhost) requires it.
+// Local Postgres has no SSL; cloud (Neon) requires it.
 const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(connectionString);
 
-// postgres.js does not automatically reconnect after DNS recovers from
-// NXDOMAIN. These settings keep the connection pool healthy under Nhost's
-// occasional flaps. `max_lifetime` forces sockets to recycle so we don't end
-// up holding stale connections to a redeployed DB.
+// Connection-pool hygiene: recycle sockets so we never hold stale connections
+// to a redeployed DB, and recover cleanly after transient network blips.
 const client = postgres(connectionString, {
   max: 10,
   idle_timeout: 20,

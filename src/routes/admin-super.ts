@@ -448,11 +448,9 @@ export const adminSuperRoutes = new Elysia({ prefix: "/admin" })
           database: { status: dbOk ? "connected" : "error", host: dbHost(env.DATABASE_URL), error: dbError },
           email_resend: { configured: Boolean(env.RESEND_API_KEY), from: env.RESEND_FROM || "— not set —" },
           gst_rapidapi: { configured: isGstApiConfigured(), host: env.RAPIDAPI_GST_HOST || "— not set —" },
-          storage_nhost: {
-            configured: Boolean(env.NHOST_ADMIN_SECRET),
-            subdomain: env.NHOST_SUBDOMAIN || "— not set —",
-            region: env.NHOST_REGION || "— not set —",
-            bucket: env.NHOST_BUCKET_ID || "default",
+          storage_blob: {
+            configured: Boolean(env.BLOB_READ_WRITE_TOKEN),
+            provider: "Vercel Blob",
           },
           whatsapp_otp: { configured: isWhatsAppConfigured(), note: "dormant in v1 (email OTP only)" },
         },
@@ -482,10 +480,7 @@ export const adminSuperRoutes = new Elysia({ prefix: "/admin" })
             RAPIDAPI_GST_METHOD: shown(env.RAPIDAPI_GST_METHOD),
           },
           storage: {
-            NHOST_SUBDOMAIN: shown(env.NHOST_SUBDOMAIN),
-            NHOST_REGION: shown(env.NHOST_REGION),
-            NHOST_BUCKET_ID: shown(env.NHOST_BUCKET_ID),
-            NHOST_ADMIN_SECRET: mask(env.NHOST_ADMIN_SECRET),
+            BLOB_READ_WRITE_TOKEN: mask(env.BLOB_READ_WRITE_TOKEN),
           },
           whatsapp: {
             WHATSAPP_TOKEN: mask(env.WHATSAPP_TOKEN),

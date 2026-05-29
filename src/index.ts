@@ -68,7 +68,7 @@ const app = new Elysia()
         info: {
           title: "FindMySpare API",
           version: "1.0.0",
-          description: "Auto Parts Marketplace — Elysia + Bun + Drizzle ORM + Nhost PostgreSQL",
+          description: "Auto Parts Marketplace — Elysia + Bun + Drizzle ORM + Neon PostgreSQL",
         },
         tags: [
           { name: "Auth", description: "Authentication & registration" },
@@ -83,7 +83,7 @@ const app = new Elysia()
           { name: "Supplier", description: "Supplier dashboard & onboarding" },
           { name: "Admin", description: "Admin panel" },
           { name: "Banners", description: "Homepage banners" },
-          { name: "Upload", description: "File upload (Nhost Storage)" },
+          { name: "Upload", description: "File upload (Vercel Blob)" },
           { name: "Messages", description: "Real-time 1:1 chat" },
         ],
         components: {

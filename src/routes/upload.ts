@@ -1,6 +1,6 @@
 import { Elysia, t } from "elysia";
 import { authGuard } from "../middleware/auth";
-import { uploadToNhost } from "../lib/storage";
+import { uploadFile } from "../lib/storage";
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB hard cap
 const ALLOWED_MIME = new Set([
@@ -44,7 +44,7 @@ export const uploadRoutes = new Elysia({ prefix: "/upload" })
       const userScoped = `${folder}/${user.id}`;
 
       try {
-        const uploaded = await uploadToNhost(file, { folder: userScoped });
+        const uploaded = await uploadFile(file, { folder: userScoped });
         return {
           url: uploaded.url,
           id: uploaded.id,
@@ -54,7 +54,7 @@ export const uploadRoutes = new Elysia({ prefix: "/upload" })
         };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        console.error("[upload] Nhost error:", msg);
+        console.error("[upload] storage error:", msg);
         set.status = 502;
         return { error: "Storage upload failed" };
       }
@@ -69,6 +69,6 @@ export const uploadRoutes = new Elysia({ prefix: "/upload" })
           t.Literal("inquiry_image"),
         ]),
       }),
-      detail: { summary: "Upload a file to Nhost Storage", tags: ["Upload"] },
+      detail: { summary: "Upload a file to Vercel Blob", tags: ["Upload"] },
     }
   );
