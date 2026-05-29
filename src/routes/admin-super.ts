@@ -16,6 +16,23 @@ import { requireAdmin, requireSuperAdmin, jwtPlugin } from "../middleware/auth";
 import { logAdminAction } from "../lib/audit";
 import { sendSupplierStatusEmail } from "../lib/email";
 import { paginate } from "../lib/pagination";
+import { isGstApiConfigured } from "../lib/sandbox-gst";
+import { isWhatsAppConfigured } from "../lib/whatsapp-otp";
+
+// Mask a secret: never expose the value, just confirm it's set + a hint.
+function mask(v: string | undefined): { set: boolean; hint: string } {
+  if (!v) return { set: false, hint: "— not set —" };
+  if (v.length <= 8) return { set: true, hint: "••••" };
+  return { set: true, hint: `${v.slice(0, 3)}…${v.slice(-3)} (${v.length} chars)` };
+}
+function shown(v: string | undefined): { set: boolean; value: string } {
+  return { set: Boolean(v), value: v || "— not set —" };
+}
+function dbHost(url: string | undefined): string {
+  if (!url) return "— not set —";
+  const m = url.match(/@([^/:]+)/);
+  return m ? m[1]! : "set";
+}
 
 // New super-admin and ops-admin endpoints. Older admin.ts is left intact for
 // existing pages; this module adds the operational surface needed for live
@@ -402,6 +419,84 @@ export const adminSuperRoutes = new Elysia({ prefix: "/admin" })
 
   // Routes below this point require super_admin specifically.
   .use(requireSuperAdmin)
+
+  // ─── Runbook: ops/config snapshot (super_admin only) ─
+  // A "Swagger for everything" — env presence (masked), service URLs,
+  // integration status, deploy + runtime info. Secrets never exposed.
+  .get(
+    "/runbook",
+    async () => {
+      const env = process.env;
+      let dbOk = true;
+      let dbError: string | null = null;
+      try {
+        await db.execute(sql`SELECT 1`);
+      } catch (e) {
+        dbOk = false;
+        dbError = e instanceof Error ? e.message : String(e);
+      }
+
+      return {
+        runtime: {
+          nodeEnv: env.NODE_ENV || "development",
+          port: env.PORT || "8000",
+          uptimeSeconds: Math.round(process.uptime()),
+          bunVersion: typeof Bun !== "undefined" ? Bun.version : "n/a",
+          timestamp: new Date().toISOString(),
+        },
+        integrations: {
+          database: { status: dbOk ? "connected" : "error", host: dbHost(env.DATABASE_URL), error: dbError },
+          email_resend: { configured: Boolean(env.RESEND_API_KEY), from: env.RESEND_FROM || "— not set —" },
+          gst_rapidapi: { configured: isGstApiConfigured(), host: env.RAPIDAPI_GST_HOST || "— not set —" },
+          storage_nhost: {
+            configured: Boolean(env.NHOST_ADMIN_SECRET),
+            subdomain: env.NHOST_SUBDOMAIN || "— not set —",
+            region: env.NHOST_REGION || "— not set —",
+            bucket: env.NHOST_BUCKET_ID || "default",
+          },
+          whatsapp_otp: { configured: isWhatsAppConfigured(), note: "dormant in v1 (email OTP only)" },
+        },
+        env: {
+          server: {
+            NODE_ENV: shown(env.NODE_ENV),
+            PORT: shown(env.PORT),
+            FRONTEND_URL: shown(env.FRONTEND_URL),
+            PROD_EXTRA_ORIGINS: shown(env.PROD_EXTRA_ORIGINS),
+          },
+          database: {
+            DATABASE_URL: { set: Boolean(env.DATABASE_URL), hint: dbHost(env.DATABASE_URL) },
+          },
+          auth: {
+            JWT_SECRET: mask(env.JWT_SECRET),
+            JWT_ACCESS_TTL: shown(env.JWT_ACCESS_TTL),
+            JWT_REFRESH_TTL: shown(env.JWT_REFRESH_TTL),
+          },
+          email: {
+            RESEND_API_KEY: mask(env.RESEND_API_KEY),
+            RESEND_FROM: shown(env.RESEND_FROM),
+          },
+          gst: {
+            RAPIDAPI_KEY: mask(env.RAPIDAPI_KEY),
+            RAPIDAPI_GST_HOST: shown(env.RAPIDAPI_GST_HOST),
+            RAPIDAPI_GST_URL: shown(env.RAPIDAPI_GST_URL),
+            RAPIDAPI_GST_METHOD: shown(env.RAPIDAPI_GST_METHOD),
+          },
+          storage: {
+            NHOST_SUBDOMAIN: shown(env.NHOST_SUBDOMAIN),
+            NHOST_REGION: shown(env.NHOST_REGION),
+            NHOST_BUCKET_ID: shown(env.NHOST_BUCKET_ID),
+            NHOST_ADMIN_SECRET: mask(env.NHOST_ADMIN_SECRET),
+          },
+          whatsapp: {
+            WHATSAPP_TOKEN: mask(env.WHATSAPP_TOKEN),
+            WHATSAPP_PHONE_NUMBER_ID: shown(env.WHATSAPP_PHONE_NUMBER_ID),
+            WHATSAPP_OTP_TEMPLATE: shown(env.WHATSAPP_OTP_TEMPLATE),
+          },
+        },
+      };
+    },
+    { detail: { summary: "Ops runbook — config + integration snapshot", tags: ["Admin"] } }
+  )
 
   .delete(
     "/users/:id",
