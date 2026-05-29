@@ -1,11 +1,26 @@
 import { Elysia, t } from "elysia";
 import { db } from "../db";
-import { users, products, inquiries, banners, rejectionReasons } from "../db/schema";
+import { users, products, inquiries, banners, rejectionReasons, magicLoginTokens } from "../db/schema";
 import { eq, ilike, and, ne, sql, desc, or, inArray } from "drizzle-orm";
+import { randomBytes, createHash } from "crypto";
 import { requireAdmin } from "../middleware/auth";
 import { parsePagination, paginate } from "../lib/pagination";
 import { logAdminAction } from "../lib/audit";
 import { sendSupplierStatusEmail } from "../lib/email";
+
+const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
+
+// Mint a single-use 7-day magic-login link for a user.
+async function createMagicLoginUrl(userId: string): Promise<string> {
+  const token = randomBytes(48).toString("hex");
+  const tokenHash = createHash("sha256").update(token).digest("hex");
+  await db.insert(magicLoginTokens).values({
+    userId,
+    tokenHash,
+    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+  });
+  return `${FRONTEND_URL}/auth/magic?token=${token}`;
+}
 
 void parsePagination;
 void inArray;
@@ -150,10 +165,12 @@ export const adminRoutes = new Elysia({ prefix: "/admin" })
           verificationStatus: users.verificationStatus,
         });
 
-      if (existing.email)
-        sendSupplierStatusEmail(existing.email, existing.name ?? "there", "approved").catch((e) =>
+      if (existing.email) {
+        const loginUrl = await createMagicLoginUrl(params.id);
+        sendSupplierStatusEmail(existing.email, existing.name ?? "there", "approved", undefined, loginUrl).catch((e) =>
           console.error("[admin/approve] email failed:", e)
         );
+      }
       logAdminAction({ actorId: user.id, request }, "supplier_approve", {
         type: "user",
         id: params.id,

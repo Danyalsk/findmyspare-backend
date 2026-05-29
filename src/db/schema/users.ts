@@ -120,6 +120,16 @@ export const loginOtps = pgTable(
   })
 );
 
+// ─── Magic login tokens (one-click login from email) ─
+export const magicLoginTokens = pgTable("magic_login_tokens", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  tokenHash: varchar("token_hash", { length: 128 }).notNull().unique(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  consumedAt: timestamp("consumed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
 // ─── Password reset tokens ───────────────────────────
 export const passwordResetTokens = pgTable("password_reset_tokens", {
   id: uuid("id").defaultRandom().primaryKey(),

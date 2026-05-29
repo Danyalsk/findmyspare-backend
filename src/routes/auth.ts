@@ -8,6 +8,7 @@ import {
   emailVerificationTokens,
   passwordResetTokens,
   loginOtps,
+  magicLoginTokens,
 } from "../db/schema";
 import { eq, and, isNull, gt, desc } from "drizzle-orm";
 import { jwtPlugin, authGuard } from "../middleware/auth";
@@ -645,6 +646,41 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
         code: t.String({ minLength: 6, maxLength: 6 }),
       }),
       detail: { summary: "Verify an email or WhatsApp login OTP", tags: ["Auth"] },
+    }
+  )
+
+  // ─── Magic login (one-click link from email) ────────
+  .post(
+    "/magic-login",
+    async ({ body, jwt, set, headers, server, request }) => {
+      const rl = await checkRateLimit(set, request, "auth:magic", 10, 5 * 60_000);
+      if (rl) return rl;
+
+      const tokenHash = sha256(body.token);
+      const [row] = await db
+        .select()
+        .from(magicLoginTokens)
+        .where(
+          and(
+            eq(magicLoginTokens.tokenHash, tokenHash),
+            isNull(magicLoginTokens.consumedAt),
+            gt(magicLoginTokens.expiresAt, new Date())
+          )
+        )
+        .limit(1);
+      if (!row) return fail(set, 400, "This login link is invalid or has expired. Use email OTP instead.");
+
+      await db.update(magicLoginTokens).set({ consumedAt: new Date() }).where(eq(magicLoginTokens.id, row.id));
+
+      const [u] = await db.select().from(users).where(eq(users.id, row.userId)).limit(1);
+      if (!u || !u.isActive) return fail(set, 403, "Account not found or deactivated");
+
+      const ip = server?.requestIP(request)?.address;
+      return issueAuth(jwt, u, headers["user-agent"], ip);
+    },
+    {
+      body: t.Object({ token: t.String({ minLength: 32 }) }),
+      detail: { summary: "Log in via a one-click magic link", tags: ["Auth"] },
     }
   )
 

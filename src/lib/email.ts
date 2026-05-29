@@ -86,7 +86,8 @@ export async function sendSupplierStatusEmail(
   to: string,
   name: string,
   status: "approved" | "rejected" | "info_requested",
-  note?: string
+  note?: string,
+  loginUrl?: string
 ): Promise<void> {
   const subjects = {
     approved: "Your supplier account is approved",
@@ -94,14 +95,17 @@ export async function sendSupplierStatusEmail(
     info_requested: "More information needed on your supplier application",
   } as const;
   const bodies = {
-    approved: `<p>Hi ${name},</p><p>Welcome aboard. Your supplier account has been approved and your dashboard is ready.</p>`,
+    approved: `<p>Hi ${name},</p><p>Welcome aboard. Your supplier account has been <strong>approved</strong> and your dashboard is ready. Click below to go straight in — no password needed.</p>`,
     rejected: `<p>Hi ${name},</p><p>Your supplier application was not approved.</p>${note ? `<p><strong>Reason:</strong> ${note}</p>` : ""}<p>You can update your details and resubmit from your account.</p>`,
     info_requested: `<p>Hi ${name},</p><p>We need additional information before we can complete your supplier verification.</p>${note ? `<p><strong>What we need:</strong> ${note}</p>` : ""}`,
   } as const;
+  // Approved emails get a one-click magic-login button; others link to the site.
+  const cta = status === "approved" ? "Open my dashboard" : "Open FindMySpare";
+  const url = status === "approved" && loginUrl ? loginUrl : FRONTEND_URL;
   await send({
     to,
     subject: subjects[status],
-    html: shell(subjects[status], bodies[status], "Open FindMySpare", FRONTEND_URL),
+    html: shell(subjects[status], bodies[status], cta, url),
   });
 }
 
