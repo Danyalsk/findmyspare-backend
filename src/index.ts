@@ -6,7 +6,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 // ─── Route Imports ───────────────────────────────────
 import { authRoutes } from "./routes/auth";
-import { productRoutes } from "./routes/products";
+import { productRoutes, publicProductRoutes } from "./routes/products";
 import { orderRoutes } from "./routes/orders";
 import { disputeRoutes } from "./routes/disputes";
 import { addressRoutes } from "./routes/addresses";
@@ -142,6 +142,11 @@ const app = new Elysia()
   })
 
   // ─── Mount Routes ────────────────────────────────────
+  // Public routes FIRST — before any plugin that introduces the global authGuard
+  // derive (authRoutes). Elysia's global derive applies to everything mounted
+  // AFTER it, so guest-browsable routes must be registered ahead of it.
+  .use(publicProductRoutes)
+  .use(bannerRoutes)
   .use(authRoutes)
   .use(productRoutes)
   .use(orderRoutes)
@@ -155,7 +160,6 @@ const app = new Elysia()
   .use(supplierOnboardingRoutes)
   .use(adminRoutes)
   .use(adminSuperRoutes)
-  .use(bannerRoutes)
   .use(uploadRoutes)
   .use(messageRoutes);
 

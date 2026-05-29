@@ -74,6 +74,10 @@ const PROFILE_GATE_EXEMPT = new Set([
 ]);
 
 export const authGuard = new Elysia({ name: "authGuard" })
+  // Global so the derived `user` reaches role-guard hooks + handlers. NOTE: this
+  // means any route in the SAME plugin instance that uses authGuard gets the 401
+  // check — so keep PUBLIC routes (e.g. product browse) in their own plugin that
+  // never imports authGuard (see publicProductRoutes), exactly like /health.
   .derive({ as: "global" }, async ({ request, set }) => {
     // Primary: BetterAuth session (web bearer token → DB-backed session row).
     const session = await auth.api.getSession({ headers: request.headers });

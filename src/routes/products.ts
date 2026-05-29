@@ -4,7 +4,10 @@ import { products, users } from "../db/schema";
 import { eq, ilike, and, gte, lte, ne, sql, desc, asc } from "drizzle-orm";
 import { authGuard, requireApprovedSupplier } from "../middleware/auth";
 
-export const productRoutes = new Elysia({ prefix: "/products" })
+// PUBLIC product routes live in their OWN plugin with NO authGuard, so the
+// global auth derive never touches them (guests can browse without a token).
+// The authenticated supplier routes are in `productRoutes` below.
+export const publicProductRoutes = new Elysia({ prefix: "/products" })
 
   // ─── List Products (Public) ──────────────────────────
   .get(
@@ -144,9 +147,12 @@ export const productRoutes = new Elysia({ prefix: "/products" })
       params: t.Object({ id: t.String() }),
       detail: { summary: "Get a single product by ID", tags: ["Products"] },
     }
-  )
+  );
 
-  // ─── Supplier's Own Products ──────────────────────────
+// ─── Authenticated supplier product routes ───────────
+// Separate plugin → the global authGuard derive applies here but NOT to the
+// public browse routes above.
+export const productRoutes = new Elysia({ prefix: "/products" })
   .use(requireApprovedSupplier)
 
   .get(
