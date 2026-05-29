@@ -64,7 +64,7 @@ export const users = pgTable("users", {
   } | null>(),
   businessAddress: jsonb("business_address").$type<{
     line1: string;
-    line2?: string;
+    line2?: string | null;
     city: string;
     state: string;
     pincode: string;

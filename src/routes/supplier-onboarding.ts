@@ -25,7 +25,8 @@ const onboardingBody = t.Object({
   gstCertificateUrl: t.Optional(t.String()),
   businessAddress: t.Object({
     line1: t.String({ minLength: 5 }),
-    line2: t.Optional(t.String()),
+    // FE sends null when blank — accept it (stored as nullable in jsonb).
+    line2: t.Optional(t.Union([t.String(), t.Null()])),
     city: t.String({ minLength: 2 }),
     state: t.String({ minLength: 2 }),
     pincode: t.String({ minLength: 6, maxLength: 6 }),
