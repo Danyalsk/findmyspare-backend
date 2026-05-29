@@ -64,6 +64,19 @@ export const auth = betterAuth({
     updateAge: 60 * 60 * 24, // refresh expiry at most once per day
   },
 
+  // BetterAuth enables rate limiting in production by default with tight limits,
+  // which produced "Too many requests" on resend. Loosen it; the 30s resend
+  // cooldown in the UI already prevents abuse.
+  rateLimit: {
+    enabled: true,
+    window: 60,
+    max: 60,
+    customRules: {
+      "/email-otp/send-verification-otp": { window: 300, max: 10 }, // ~one per 30s
+      "/sign-in/email-otp": { window: 300, max: 20 }, // generous verify attempts
+    },
+  },
+
   // Domain columns already present on `users`. Declared here so BetterAuth
   // reads/returns them on the session user. `input: false` = server-managed
   // (set via our own routes/migrations, not via the auth API).
@@ -85,8 +98,11 @@ export const auth = betterAuth({
     // Passwordless email login (find-or-creates the user on first verify).
     emailOTP({
       otpLength: 6,
-      expiresIn: 60 * 10, // 10 minutes
+      expiresIn: 60 * 10, // 10 minutes — code stays valid well past the UI countdown
       allowedAttempts: 5,
+      // Resending re-sends the SAME code and extends its expiry (no new code),
+      // so a user who clicks "Resend" isn't locked out by a changed OTP.
+      resendStrategy: "reuse",
       // Do not await — avoids timing leaks; Resend send is fire-and-forget.
       sendVerificationOTP: async ({ email, otp }) => {
         sendOtpEmail(email, otp).catch((e) =>
