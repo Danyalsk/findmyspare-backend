@@ -27,6 +27,22 @@ if (!SECRET && NODE_ENV === "production") {
 // 30-day sessions, matching the previous refresh-token TTL.
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
 
+// ─── Demo / QA logins ────────────────────────────────
+// Fixed-OTP accounts so you can sign in without a real inbox (demos, testing).
+// Their OTP is always the value below and NO email is sent. Seed the matching
+// user rows with `bun run src/scripts/seed-demo.ts`.
+// ⚠️ This is a backdoor — OFF by default. Enable per-environment with DEMO_LOGIN=1
+// (e.g. local .env for testing). Leave it UNSET in production for public launch.
+const DEMO_LOGINS: Record<string, string> = {
+  "demo.supplier@findmyspare.com": "123456",
+  "demo.buyer@findmyspare.com": "123456",
+};
+const DEMO_ENABLED = process.env.DEMO_LOGIN === "1";
+function demoOtpFor(email: string): string | undefined {
+  if (!DEMO_ENABLED) return undefined;
+  return DEMO_LOGINS[email.toLowerCase()];
+}
+
 export const auth = betterAuth({
   secret: SECRET || "dev-only-secret-change-me",
   baseURL: BACKEND_URL,
@@ -103,8 +119,15 @@ export const auth = betterAuth({
       // Resending re-sends the SAME code and extends its expiry (no new code),
       // so a user who clicks "Resend" isn't locked out by a changed OTP.
       resendStrategy: "reuse",
+      // Demo accounts get a fixed code; everyone else a random one.
+      generateOTP: ({ email }) => demoOtpFor(email),
       // Do not await — avoids timing leaks; Resend send is fire-and-forget.
+      // Skip the real email for demo accounts (their code is fixed + known).
       sendVerificationOTP: async ({ email, otp }) => {
+        if (demoOtpFor(email)) {
+          console.log(`[auth/email-otp] demo login for ${email} (OTP ${otp}) — email skipped`);
+          return;
+        }
         sendOtpEmail(email, otp).catch((e) =>
           console.error("[auth/email-otp] send failed:", e)
         );
