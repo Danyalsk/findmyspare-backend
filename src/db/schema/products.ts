@@ -20,6 +20,9 @@ export const productStatusEnum = pgEnum("product_status", [
   "paused",
   "out_of_stock",
   "deleted",
+  // "draft" = private inventory item, not yet published to the marketplace.
+  // Invisible to buyers; publishing flips it to "active"/"out_of_stock".
+  "draft",
 ]);
 
 // ─── Products Table ──────────────────────────────────
@@ -34,6 +37,7 @@ export const products = pgTable("products", {
   category: varchar("category", { length: 100 }),
   price: numeric("price", { precision: 12, scale: 2 }).notNull(),
   stockQuantity: integer("stock_quantity").notNull().default(0),
+  lowStockThreshold: integer("low_stock_threshold").notNull().default(5),
   images: jsonb("images").$type<string[]>().default([]),
   specifications: jsonb("specifications").$type<Record<string, string>>().default({}),
   compatibleVehicles: jsonb("compatible_vehicles")

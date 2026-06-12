@@ -4,10 +4,13 @@ import {
   text,
   boolean,
   timestamp,
+  jsonb,
   index,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { users } from "./users";
+
+export type MessageAttachment = { url: string; type: "image" | "video" };
 
 export const messages = pgTable(
   "messages",
@@ -20,6 +23,7 @@ export const messages = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     content: text("content").notNull(),
+    attachments: jsonb("attachments").$type<MessageAttachment[]>().notNull().default([]),
     isRead: boolean("is_read").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },

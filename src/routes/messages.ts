@@ -46,6 +46,7 @@ export const messageRoutes = new Elysia({ prefix: "/messages" })
           SELECT
             p.partner_id,
             m.content AS last_message,
+            m.attachments AS last_attachments,
             m.created_at AS last_message_at,
             (
               SELECT count(*)::int FROM messages
@@ -55,7 +56,7 @@ export const messageRoutes = new Elysia({ prefix: "/messages" })
             ) AS unread_count
           FROM partners p
           JOIN LATERAL (
-            SELECT content, created_at FROM messages
+            SELECT content, attachments, created_at FROM messages
             WHERE (sender_id = ${user.id} AND receiver_id = p.partner_id)
                OR (sender_id = p.partner_id AND receiver_id = ${user.id})
             ORDER BY created_at DESC
@@ -69,6 +70,7 @@ export const messageRoutes = new Elysia({ prefix: "/messages" })
           u.business_name AS "businessName",
           u.image,
           l.last_message AS "lastMessage",
+          l.last_attachments AS "lastAttachments",
           l.last_message_at AS "lastMessageAt",
           l.unread_count AS "unreadCount"
         FROM latest l
@@ -187,6 +189,13 @@ export const messageRoutes = new Elysia({ prefix: "/messages" })
         return { error: "Cannot message admin" };
       }
 
+      const content = (body.content ?? "").trim();
+      const attachments = body.attachments ?? [];
+      if (!content && attachments.length === 0) {
+        set.status = 400;
+        return { error: "Message must have text or an attachment" };
+      }
+
       // Insert first — broadcast only on confirmed write. If the DB rejects
       // (constraint, connection, etc.), the catch returns 500 and the socket
       // event is never emitted, keeping server and client in sync.
@@ -197,7 +206,8 @@ export const messageRoutes = new Elysia({ prefix: "/messages" })
           .values({
             senderId: user.id,
             receiverId: userId,
-            content: body.content,
+            content,
+            attachments,
           })
           .returning();
         msg = inserted[0];
@@ -219,7 +229,18 @@ export const messageRoutes = new Elysia({ prefix: "/messages" })
     },
     {
       params: t.Object({ userId: t.String() }),
-      body: t.Object({ content: t.String({ minLength: 1, maxLength: 2000 }) }),
+      body: t.Object({
+        content: t.Optional(t.String({ maxLength: 2000 })),
+        attachments: t.Optional(
+          t.Array(
+            t.Object({
+              url: t.String(),
+              type: t.Union([t.Literal("image"), t.Literal("video")]),
+            }),
+            { maxItems: 10 }
+          )
+        ),
+      }),
       detail: { summary: "Send a message to a user", tags: ["Messages"] },
     }
   )

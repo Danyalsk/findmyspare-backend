@@ -8,9 +8,11 @@ import {
   addresses,
   escrowTransactions,
   notifications,
+  disputes,
 } from "../db/schema";
 import { eq, and, or, desc, sql } from "drizzle-orm";
 import { authGuard } from "../middleware/auth";
+import { recordStockMovement } from "../lib/stock";
 
 export const orderRoutes = new Elysia({ prefix: "/orders" })
   .use(authGuard)
@@ -192,6 +194,14 @@ export const orderRoutes = new Elysia({ prefix: "/orders" })
           .limit(1);
       }
 
+      // Latest dispute (if any) so the clients can deep-link to the thread.
+      const [dispute] = await db
+        .select({ id: disputes.id, status: disputes.status })
+        .from(disputes)
+        .where(eq(disputes.orderId, params.id))
+        .orderBy(desc(disputes.createdAt))
+        .limit(1);
+
       return {
         order,
         items,
@@ -199,6 +209,7 @@ export const orderRoutes = new Elysia({ prefix: "/orders" })
         buyer,
         supplier,
         shippingAddress,
+        dispute: dispute ?? null,
       };
     },
     {
@@ -229,6 +240,7 @@ export const orderRoutes = new Elysia({ prefix: "/orders" })
         quantity: number;
         unitPrice: string;
         subtotal: string;
+        product: typeof products.$inferSelect;
       }[] = [];
 
       // All items must be from a single supplier (Phase 1)
@@ -276,6 +288,7 @@ export const orderRoutes = new Elysia({ prefix: "/orders" })
           quantity: item.quantity,
           unitPrice: product.price,
           subtotal: subtotal.toFixed(2),
+          product,
         });
       }
 
@@ -307,14 +320,15 @@ export const orderRoutes = new Elysia({ prefix: "/orders" })
         }))
       );
 
-      // Deduct stock
+      // Deduct stock through the audited ledger (flips out_of_stock + fires
+      // low-stock notification on threshold crossing).
       for (const item of validatedItems) {
-        await db
-          .update(products)
-          .set({
-            stockQuantity: sql`${products.stockQuantity} - ${item.quantity}`,
-          })
-          .where(eq(products.id, item.productId));
+        await recordStockMovement({
+          product: item.product,
+          delta: -item.quantity,
+          reason: "order",
+          createdBy: user.id,
+        });
       }
 
       // Create escrow hold (100% of total)
@@ -442,6 +456,29 @@ export const orderRoutes = new Elysia({ prefix: "/orders" })
           .update(escrowTransactions)
           .set({ status: "refund_completed", refundedAt: new Date() })
           .where(eq(escrowTransactions.orderId, params.id));
+
+        // Restock the reserved units (deducted at placement). Without this,
+        // cancellations would leak stock permanently.
+        const cancelledItems = await db
+          .select({ productId: orderItems.productId, quantity: orderItems.quantity })
+          .from(orderItems)
+          .where(eq(orderItems.orderId, params.id));
+        for (const ci of cancelledItems) {
+          if (!ci.productId) continue;
+          const [prod] = await db
+            .select()
+            .from(products)
+            .where(eq(products.id, ci.productId))
+            .limit(1);
+          if (prod) {
+            await recordStockMovement({
+              product: prod,
+              delta: ci.quantity,
+              reason: "order_cancelled",
+              createdBy: user.id,
+            });
+          }
+        }
       }
 
       const [updated] = await db

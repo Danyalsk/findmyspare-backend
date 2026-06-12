@@ -5,6 +5,7 @@
 export * from "./users";
 export * from "./auth";
 export * from "./products";
+export * from "./stock-movements";
 export * from "./orders";
 export * from "./addresses";
 export * from "./escrow";

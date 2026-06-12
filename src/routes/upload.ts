@@ -2,13 +2,18 @@ import { Elysia, t } from "elysia";
 import { authGuard } from "../middleware/auth";
 import { uploadFile } from "../lib/storage";
 
-const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB hard cap
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB for images/docs
+const MAX_VIDEO_BYTES = 50 * 1024 * 1024; // 50 MB for short chat clips
 const ALLOWED_MIME = new Set([
   "image/jpeg",
   "image/png",
   "image/webp",
   "image/gif",
   "application/pdf", // GST certs may be PDFs
+  // Chat video clips
+  "video/mp4",
+  "video/quicktime",
+  "video/webm",
 ]);
 
 const KIND_FOLDER: Record<string, string> = {
@@ -16,6 +21,8 @@ const KIND_FOLDER: Record<string, string> = {
   product_image: "products",
   banner_image: "banners",
   inquiry_image: "inquiries",
+  message_image: "messages",
+  message_video: "messages",
 };
 
 export const uploadRoutes = new Elysia({ prefix: "/upload" })
@@ -30,9 +37,11 @@ export const uploadRoutes = new Elysia({ prefix: "/upload" })
         return { error: "file is required (multipart)" };
       }
 
-      if (file.size > MAX_FILE_BYTES) {
+      const isVideo = file.type.startsWith("video/");
+      const maxBytes = isVideo ? MAX_VIDEO_BYTES : MAX_IMAGE_BYTES;
+      if (file.size > maxBytes) {
         set.status = 413;
-        return { error: `File exceeds ${MAX_FILE_BYTES / 1024 / 1024}MB limit` };
+        return { error: `File exceeds ${maxBytes / 1024 / 1024}MB limit` };
       }
 
       if (!ALLOWED_MIME.has(file.type)) {
@@ -67,6 +76,8 @@ export const uploadRoutes = new Elysia({ prefix: "/upload" })
           t.Literal("product_image"),
           t.Literal("banner_image"),
           t.Literal("inquiry_image"),
+          t.Literal("message_image"),
+          t.Literal("message_video"),
         ]),
       }),
       detail: { summary: "Upload a file to Vercel Blob", tags: ["Upload"] },

@@ -1,7 +1,7 @@
 import { Elysia, t } from "elysia";
 import { db } from "../db";
-import { products, users } from "../db/schema";
-import { eq, ilike, and, gte, lte, ne, sql, desc, asc } from "drizzle-orm";
+import { products, users, stockMovements } from "../db/schema";
+import { eq, ilike, and, gte, lte, ne, notInArray, sql, desc, asc } from "drizzle-orm";
 import { authGuard, requireApprovedSupplier } from "../middleware/auth";
 
 // PUBLIC product routes live in their OWN plugin with NO authGuard, so the
@@ -114,6 +114,7 @@ export const publicProductRoutes = new Elysia({ prefix: "/products" })
           category: products.category,
           price: products.price,
           stockQuantity: products.stockQuantity,
+          lowStockThreshold: products.lowStockThreshold,
           images: products.images,
           specifications: products.specifications,
           compatibleVehicles: products.compatibleVehicles,
@@ -128,7 +129,9 @@ export const publicProductRoutes = new Elysia({ prefix: "/products" })
         })
         .from(products)
         .leftJoin(users, eq(products.supplierId, users.id))
-        .where(and(eq(products.id, params.id), ne(products.status, "deleted")))
+        // Exclude soft-deleted AND private drafts — neither should be reachable
+        // by guests via a direct product ID.
+        .where(and(eq(products.id, params.id), notInArray(products.status, ["deleted", "draft"])))
         .limit(1);
 
       if (!product) {
@@ -177,6 +180,7 @@ export const productRoutes = new Elysia({ prefix: "/products" })
           category: products.category,
           price: products.price,
           stockQuantity: products.stockQuantity,
+          lowStockThreshold: products.lowStockThreshold,
           images: products.images,
           status: products.status,
           viewCount: products.viewCount,
@@ -218,6 +222,7 @@ export const productRoutes = new Elysia({ prefix: "/products" })
   .post(
     "/",
     async ({ body, user, set }) => {
+      const initialStock = body.stockQuantity ?? 0;
       const [product] = await db
         .insert(products)
         .values({
@@ -227,13 +232,28 @@ export const productRoutes = new Elysia({ prefix: "/products" })
           partNumber: body.partNumber,
           category: body.category,
           price: body.price,
-          stockQuantity: body.stockQuantity ?? 0,
+          stockQuantity: initialStock,
+          lowStockThreshold: body.lowStockThreshold ?? 5,
           images: body.images ?? [],
           specifications: body.specifications ?? {},
           compatibleVehicles: body.compatibleVehicles ?? [],
           warrantyInfo: body.warrantyInfo,
+          status: body.status ?? "active",
         })
         .returning();
+
+      // Seed the ledger so opening stock is auditable.
+      if (initialStock > 0) {
+        await db.insert(stockMovements).values({
+          productId: product.id,
+          supplierId: user.id,
+          delta: initialStock,
+          previousQuantity: 0,
+          newQuantity: initialStock,
+          reason: "initial",
+          createdBy: user.id,
+        });
+      }
 
       set.status = 201;
       return { product };
@@ -246,6 +266,7 @@ export const productRoutes = new Elysia({ prefix: "/products" })
         category: t.Optional(t.String()),
         price: t.String(),
         stockQuantity: t.Optional(t.Number()),
+        lowStockThreshold: t.Optional(t.Number()),
         images: t.Optional(t.Array(t.String())),
         specifications: t.Optional(t.Record(t.String(), t.String())),
         compatibleVehicles: t.Optional(
@@ -258,6 +279,8 @@ export const productRoutes = new Elysia({ prefix: "/products" })
           )
         ),
         warrantyInfo: t.Optional(t.String()),
+        // "draft" keeps the item private (inventory only); default "active" lists it.
+        status: t.Optional(t.Union([t.Literal("draft"), t.Literal("active")])),
       }),
       detail: { summary: "Create a new product (approved supplier only)", tags: ["Products"] },
     }
@@ -300,6 +323,7 @@ export const productRoutes = new Elysia({ prefix: "/products" })
           category: t.String(),
           price: t.String(),
           stockQuantity: t.Number(),
+          lowStockThreshold: t.Number(),
           images: t.Array(t.String()),
           specifications: t.Record(t.String(), t.String()),
           compatibleVehicles: t.Array(
@@ -314,6 +338,7 @@ export const productRoutes = new Elysia({ prefix: "/products" })
             t.Literal("active"),
             t.Literal("paused"),
             t.Literal("out_of_stock"),
+            t.Literal("draft"),
           ]),
         })
       ),

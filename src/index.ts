@@ -7,6 +7,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 // ─── Route Imports ───────────────────────────────────
 import { authRoutes } from "./routes/auth";
 import { productRoutes, publicProductRoutes } from "./routes/products";
+import { inventoryRoutes } from "./routes/inventory";
 import { orderRoutes } from "./routes/orders";
 import { disputeRoutes } from "./routes/disputes";
 import { addressRoutes } from "./routes/addresses";
@@ -73,6 +74,7 @@ const app = new Elysia()
         tags: [
           { name: "Auth", description: "Authentication & registration" },
           { name: "Products", description: "Product catalog management" },
+          { name: "Inventory", description: "Supplier stock & inventory management" },
           { name: "Orders", description: "Order lifecycle management" },
           { name: "Disputes", description: "Dispute & return management" },
           { name: "Addresses", description: "Delivery address management" },
@@ -149,6 +151,7 @@ const app = new Elysia()
   .use(bannerRoutes)
   .use(authRoutes)
   .use(productRoutes)
+  .use(inventoryRoutes)
   .use(orderRoutes)
   .use(disputeRoutes)
   .use(addressRoutes)
