@@ -130,9 +130,9 @@ export const inventoryRoutes = new Elysia({ prefix: "/inventory" })
         set.status = 403;
         return { error: "You can only adjust your own inventory" };
       }
-      if (body.delta === 0) {
+      if (!Number.isInteger(body.delta) || body.delta === 0) {
         set.status = 400;
-        return { error: "Adjustment delta cannot be zero" };
+        return { error: "Adjustment delta must be a non-zero whole number" };
       }
       if (product.stockQuantity + body.delta < 0) {
         set.status = 400;
@@ -154,7 +154,9 @@ export const inventoryRoutes = new Elysia({ prefix: "/inventory" })
     {
       params: t.Object({ productId: t.String() }),
       body: t.Object({
-        delta: t.Integer(),
+        // t.Number (not t.Integer) for compatibility across TypeBox versions;
+        // integer-ness is enforced in the handler above.
+        delta: t.Number(),
         reason: t.Union([
           t.Literal("received"),
           t.Literal("damaged"),
